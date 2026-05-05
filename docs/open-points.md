@@ -49,6 +49,14 @@ Following from the above: when the firmware does `STI #$70,$1B` followed by `JMP
 
 The reference ELSA image is a particularly clear example of why this matters: its boot is a **three-stage trampoline**, and each stage's `JMP` target reads from a *different* physical bank than the bank you'd see by linearly disassembling the file. The first stage at `$FFC0` jumps to `$6200`, but `$6200` after the BSR write reads from file offset `0x0200`, not `0x6200`. Without bank-aware xrefs, a Ghidra user has to follow that chain manually with the binary loader's "File Offset" knob — which we walk through end-to-end in `binary/elsa_microlink_336tqv.md`. An automatic analyser that recognised the `STI #imm,$001x; JMP $abs` pattern and computed the post-switch target would turn that manual walk into a one-click follow-jump.
 
+A second observation from the same firmware sharpens what the analyser should look like. The ELSA modem doesn't reprogram BSRs in arbitrary ways at runtime — it switches between **four named, hand-tuned configurations** (Cfg1-Cfg4 in the firmware author's terminology) using four small dispatcher functions named `switch_rom_cfgX()`. Each configuration is a fixed 8-byte BSR-value vector. So the realistic shape of the analyser is:
+
+1. Recognise calls to one of (a small number of) configuration-switch functions.
+2. For each call site, annotate the configuration that is active *after* the call.
+3. Resolve cross-bank references in subsequent code against the active configuration's overlay.
+
+That is much more tractable than tracking arbitrary BSR writes. It also matches how real banked-ROM firmwares are written in practice: programmers don't enjoy deriving BSR values by hand; they use named macros / functions for the configurations they actually need.
+
 ### CRC peripheral is opaque
 
 The slaspec defines `crc_init` as a p-code op but never invokes it; the pspec exposes `CRC_L`, `CRC_H` symbols at `$05FE/F` and that's the extent of CRC modelling. If the firmware uses the on-chip CRC heavily, an analyser that recognises the `STA $05FE` / `LDA $05FE` / `LDA $05FF` idiom and labels the surrounding code as "CRC initialise" / "CRC feed" / "CRC read" would pay for itself quickly.

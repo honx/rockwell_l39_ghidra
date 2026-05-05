@@ -6,9 +6,12 @@ here come from static analysis with the in-tree `RockwellL39:LE:16:default`
 Ghidra processor module, cross-referenced against the L39 / R65C19 / RC240VFC
 datasheets in `reference/`. Where I'm guessing rather than reading I say so.
 
-> Many thanks to the contributor who corrected an early version of this
-> analysis on the BSR encoding — the file *is* a single banked image, not
-> two chips. The corrected interpretation is below.
+> The contributor who corrected this analysis (twice — first on the BSR
+> encoding being a single 128 KiB EPROM rather than two chips, then on the
+> four-configuration runtime banking scheme below) is the reason this
+> document is now correct. The original mistake is preserved in the git
+> history; the second correction landed via the diagram in
+> `binary/banking-configurations.png`.
 
 ## TL;DR
 
@@ -181,41 +184,115 @@ file 0x67B6:
   ...                              ; further port and timer init follows
 ```
 
-After this third stub finishes, **the runtime memory map is**:
+After this third stub finishes, the L3902 is in **configuration 2** of
+a four-configuration runtime scheme that the firmware uses to multiplex
+the 128 KiB of EPROM through a 64 KiB CPU view (see next section).
+
+### The runtime banking model: four configurations
+
+The firmware doesn't use the BSRs as a free-form bank-mapping primitive
+— it uses them to switch between four **named, hand-tuned configurations**
+called Cfg1, Cfg2, Cfg3 and Cfg4. Each configuration determines what is
+visible in the four lower ROM windows (`$0800-$7FFF`); the four upper
+windows (`$8000-$FFFF`) hold RAM and persistent ROM and never change.
+
+| CPU window | Cfg1 | **Cfg2** | Cfg3 | Cfg4 | Always (B8-BE) |
+|---|---|---|---|---|---|
+| `$0800-$1FFF` (B0) | ROM0  | **ROM8** | ROM10 | ROM18 | — |
+| `$2000-$3FFF` (B2) | ROM2  | **ROMA** | ROM12 | ROM1A | — |
+| `$4000-$5FFF` (B4) | ROM4  | **ROMC** | ROM14 | ROM1C | — |
+| `$6000-$7FFF` (B6) | ROME  | **INX**  | ROM16 | ROM1E | — |
+| `$8000-$9FFF` (B8) | — | — | — | — | **RAM0** (external SRAM) |
+| `$A000-$BFFF` (BA) | — | — | — | — | **RAM1** (external SRAM) |
+| `$C000-$DFFF` (BC) | — | — | — | — | **RAM2** (external SRAM, special role) |
+| `$E000-$FFFF` (BE) | — | — | — | — | **ROM6** (file `0x06000-0x07FFF`) |
+
+`ROMn` here means "physical EPROM bank starting at file offset `0xn000`":
+ROM0 = file `0x00000-0x01FFF`, ROM8 = file `0x08000-0x09FFF`, ROM18 =
+file `0x18000-0x19FFF`, and so on. There are sixteen of these (8 KiB
+each = 128 KiB total). `INX` is a special selection (probably "internal"
+or an unmapped sentinel — see the open points). After power-on, the
+third-stage boot stub explicitly programs the BSRs to **Cfg2**:
 
 ```
-$0000-$07FF  on-chip I/O + RAM (page 0..5, registers, FIFO, etc.)
-$0800-$1FFF  file 0x00000-0x01FFF   ─┐
-$2000-$3FFF  file 0x02000-0x03FFF    │  "low ROM" — strings, V.8 INFO
-$4000-$5FFF  file 0x04000-0x05FFF   ─┘   tables, Rockwell ADPCM descriptors
-$6000-$7FFF  file 0x0E000-0x0FFFF       boot ROM + jump table (now lives here)
-$8000-$9FFF  file 0x10000-0x11FFF   ─┐
-$A000-$BFFF  file 0x12000-0x13FFF    │  "high ROM" — fax response set,
-$C000-$DFFF  file 0x14000-0x15FFF   ─┘   AT result codes, modem state machines
-$E000-$FFFF  file 0x06000-0x07FFF       hardware-init bank + runtime IRQ vectors
+BSR0 := $70  $71  $72  $77  $B0  $B1  $B2  $73
+        |    |    |    |    |    |    |    |
+        v    v    v    v    v    v    v    v
+       ROM8 ROMA ROMC INX  RAM0 RAM1 RAM2 ROM6
 ```
 
-Three things drop out of this layout:
+The firmware switches between configurations at runtime via four
+discrete entry points — call them `switch_rom_cfg1()`, `..._cfg2()`,
+`..._cfg3()`, `..._cfg4()`. (The exact entry-point addresses can be
+located by searching for back-to-back writes to `BSR0`-`BSR3` followed
+by an `RTS`; we haven't pinned them down by hand yet.)
 
-1. **All the German/V.42bis label strings live in low ROM** (the bank
-   we read at file `0x0000-0x05FF` etc.) and at runtime appear at logical
-   `$0800-$1FFF`. So a `LDA $1C18` at runtime reads the "Hey, it's an
-   ELSA!" string at file `0x1C18`.
+### What lives in each configuration
 
-2. **All the AT command result codes and the Class 2 fax response set
-   live in high ROM** at file `0x10000-0x15FFF`, accessible at runtime
-   via `LDA $80xx`-`LDA $D7xx`. So when the firmware emits "CONNECT" or
-   "+FHS:" to the host, it's reading from physical banks 8-10.
+The split tells us how the firmware authors partitioned the code base:
+
+- **Cfg1** (ROM0/2/4 + ROME) — the *low* 24 KiB of EPROM plus bank 7.
+  This is where the boot-time strings, V.8 INFO descriptors, V.42bis
+  parameter tables, and Rockwell ADPCM mode declarations live (everything
+  we saw at file offsets `$0000-$05FF` and `$2000-$3FFF`). Bank ROME at
+  file `0x0E000-0x0FFFF` contains the static reset stub at `$FFC0` and
+  is *only* visible at logical `$6000-$7FFF` when Cfg1 is active.
+
+- **Cfg2** (ROM8/A/C + INX) — the *middle* 24 KiB of EPROM. This is the
+  active configuration after reset, so anything the firmware needs in
+  the steady-state idle / command-response path lives here.
+
+- **Cfg3** (ROM10/12/14/16) — the *upper-low* 32 KiB of EPROM
+  (file `0x10000-0x17FFF`). Contains the AT-command result codes
+  (`OK` / `CONNECT` / `NO CARRIER` / `RING` / etc.) at file `0x15700`
+  onwards, plus parts of the modem state machine.
+
+- **Cfg4** (ROM18/1A/1C/1E) — the *upper-high* 32 KiB of EPROM
+  (file `0x18000-0x1FFFF`). Contains the Class 2 fax response set
+  (`+FCON` / `+FHNG` / `+FDIS` / etc.) starting at file `0x18CFC`,
+  plus diagnostic verbose-printout strings.
+
+### The persistent windows: RAM0/1/2 and ROM6
+
+The four "always-present" windows do all the heavy work:
+
+- **`$8000-$9FFF` = RAM0**, **`$A000-$BFFF` = RAM1**, **`$C000-$DFFF` =
+  RAM2** are 24 KiB of external SRAM the L3902 uses for the modem's
+  per-connection state — adaptive equaliser taps, V.42bis dictionary,
+  HDLC frame buffers, etc. RAM2 is marked specially in the friend's
+  diagram (green vs the blue of RAM0/1) and is probably the DSP-shared
+  buffer area or the dual-port bridge to the host.
+
+- **`$E000-$FFFF` = ROM6** (file `0x06000-0x07FFF`) is the *always-present*
+  code bank. It contains the third-stage hardware-init code at file
+  `0x067B6`, the runtime IRQ dispatcher at file `0x062E7-0x063C2`, the
+  runtime IRQ vector table at the top of the bank (file `0x07FE0-0x07FFF`),
+  and the four `switch_rom_cfgX()` entry points that the rest of the
+  firmware calls into to flip between Cfg1-Cfg4.
+
+This is the architectural keystone: **ROM6 is the dispatcher**, and
+every routine that crosses configurations goes through it.
+
+### Three things that drop out of this layout
+
+1. **All the German/V.42bis label strings live in Cfg1**. So a
+   `LDA $1C18` while Cfg1 is active reads the "Hey, it's an ELSA!"
+   string at file `0x1C18`. While Cfg2/3/4 is active, the same logical
+   `LDA $1C18` reads from a completely different file region and
+   produces garbage — meaning the firmware must `switch_rom_cfg1()`
+   before any code path that prints those strings.
+
+2. **AT result codes and fax responses live in different configurations**:
+   AT result codes in Cfg3, fax responses in Cfg4. That implies the
+   command parser switches configuration based on which subsystem (data
+   vs fax vs voice) the AT command targets.
 
 3. **The runtime IRQ vector table lives at file `0x7FE0-0x7FFF`**, the
-   top of the bank that BSR3 maps to `$6000-$7FFF` after init. Wait —
-   that doesn't match: BSR3 maps to `$6000-$7FFF` and the vectors *should*
-   live at `$FFE0-$FFFF`, mapped from BSR7. The reality is BSR7 = `$73`
-   maps to file `0x6000-0x7FFF` (bank 3), so the bytes at the top of that
-   bank (file `0x7FE0-0x7FFF`) appear at logical `$FFE0-$FFFF`. That
-   matters because the IRQ vectors there *do* point to real handlers
-   (next paragraph), unlike the all-`$FFC0` vectors in bank 7 that we
-   saw earlier.
+   top of bank ROM6, visible at logical `$FFE0-$FFFF` regardless of
+   which Cfg is active. This is why the static all-`$FFC0` vectors in
+   bank ROME (the boot bank, only visible in Cfg1) don't matter at
+   runtime — once the system is in Cfg2/3/4, those vectors aren't
+   even reachable.
 
 ### Runtime IRQ vector table (file `0x7FE0-0x7FFF`, visible at `$FFE0-$FFFF` after init)
 
@@ -545,29 +622,45 @@ isn't statically reachable from the boot-time view alone.
 
 ## Open questions
 
-1. **What `(command, sub-command) = ($03, $12)` means.** That's the
+1. **The `switch_rom_cfgX()` entry points.** We know they exist (the
+   contributor named them) and roughly what they do (write a fixed
+   8-byte sequence to `BSR0`-`BSR7` to establish one of Cfg1-Cfg4),
+   but the four addresses haven't been pinned down. Find them by
+   grepping ROM6 for `STI #imm,$0018` followed by writes to `$0019`
+   through `$001F`; there should be exactly four such sequences.
+2. **What `INX` actually selects.** The B6 cell in Cfg2 reads "INX" in
+   the contributor's diagram. Best guess: a sentinel value the L3902
+   treats as "no chip selected" (so reads return open-bus / `$FF`),
+   used because Cfg2 doesn't need anything in the `$6000-$7FFF` window.
+   Alternative reading: "internal" or some board-level re-routing.
+   Confirming this would mean tracing what code in Cfg2 touches the
+   `$6000-$7FFF` range, if any.
+3. **What `(command, sub-command) = ($03, $12)` means.** That's the
    selector the command stub at `$E200` issues to the dispatcher at
    `$E81B`. Determining the dispatcher's table format would unlock the
    meaning of every other command stub in the firmware.
-2. **Cross-bank disassembly.** The current Ghidra import only shows the
-   boot-time view. Re-importing with the runtime BSR layout (BSR0-2 →
-   banks 0-2, BSR3 → bank 7, BSR4-6 → banks 8-10, BSR7 → bank 3) and
-   stitching the listings together would give a unified call graph for
-   the whole firmware. This is what the "BSR-aware analysis" entry in
-   `docs/open-points.md` is asking for.
-3. **The runtime IRQ handler bodies.** We located the vector table at
+4. **Cross-configuration disassembly.** The current Ghidra import only
+   shows one configuration at a time. Loading all four into one project
+   (probably via four overlay blocks named `cfg1`-`cfg4`) and teaching
+   Ghidra to follow `switch_rom_cfgX()` calls into the right overlay
+   would give a unified call graph. The "BSR-aware analysis" entry in
+   `docs/open-points.md` now has a concrete shape it should take: not
+   "track every `STI #imm,$001x` write" but "recognise four named
+   configuration functions and switch overlay accordingly."
+5. **The runtime IRQ handler bodies.** We located the vector table at
    `$E2E7-$E3C2` (file `0x62E7-0x63C2`) but didn't disassemble each
-   handler. The 220-byte block is small enough to walk by hand once you
-   set up Ghidra to view file `0x6000-0x7FFF` at logical `$E000-$FFFF`.
-4. **The `0x33` byte at file `0x1FFFF`.** Positioned like a checksum
-   byte but its algorithm is undocumented here. The L3902 has an on-chip
-   16-bit CRC unit at `$05FE/F`; the firmware probably uses it both for
-   runtime validation of received HDLC frames and for boot-time
-   self-check, but neither use site has been identified.
-5. **The ARA / `#WA46` block.** AppleTalk Remote Access support is
+   handler. The 220-byte block is small enough to walk by hand once
+   you set up Ghidra to view file `0x6000-0x7FFF` at logical
+   `$E000-$FFFF`.
+6. **The `0x33` byte at file `0x1FFFF`.** Positioned like a checksum
+   byte but its algorithm is undocumented here. The L3902 has an
+   on-chip 16-bit CRC unit at `$05FE/F`; the firmware probably uses
+   it both for runtime validation of received HDLC frames and for
+   boot-time self-check, but neither use site has been identified.
+7. **The ARA / `#WA46` block.** AppleTalk Remote Access support is
    referenced (the dispatch tables and the diagnostic string both
-   exist), but the actual ARA negotiator isn't located. Almost certainly
-   it lives behind one of the command stubs.
+   exist), but the actual ARA negotiator isn't located. Almost
+   certainly it lives behind one of the command stubs.
 
 ## Summary
 

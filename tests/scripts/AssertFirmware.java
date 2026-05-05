@@ -95,6 +95,29 @@ public class AssertFirmware extends GhidraScript {
         check(s_67b7.startsWith("sti #0x0,0x32"),      "$67B7 = STI #$00,$32 (got: " + s_67b7 + ")");
         check(s_67ba.startsWith("cld"),                "$67BA = CLD (got: " + s_67ba + ")");
 
+        // The third-stage stub establishes Cfg2 with a fixed BSR sequence
+        // (per binary/elsa_microlink_336tqv.md "runtime banking model"):
+        //   BSR0:=$70 BSR1:=$71 BSR2:=$72 BSR3:=$77 BSR4:=$B0 BSR5:=$B1 BSR6:=$B2 BSR7:=$73
+        // The eight STI writes start at file 0x67CD (after the port/timer
+        // setup that precedes them in the third-stage stub). Verify the
+        // byte sequence on the eight three-byte STI instructions.
+        long[] cfg2Bsr = { 0x70, 0x71, 0x72, 0x77, 0xB0, 0xB1, 0xB2, 0x73 };
+        long bsrSeqBase = 0x67CDL;
+        boolean cfg2_ok = true;
+        StringBuilder cfg2_msg = new StringBuilder(String.format("Cfg2 BSR setup at $%04X:", bsrSeqBase));
+        for (int i = 0; i < 8; i++) {
+            long pc = bsrSeqBase + 3L * i;
+            int b0 = mem.getByte(ram.getAddress(pc))     & 0xFF;
+            int b1 = mem.getByte(ram.getAddress(pc + 1)) & 0xFF;
+            int b2 = mem.getByte(ram.getAddress(pc + 2)) & 0xFF;
+            // Each entry must be the STI opcode ($B2), the expected value, the BSR address ($18+i).
+            int wantBsrAddr = 0x18 + i;
+            boolean ok = (b0 == 0xB2) && (b1 == (int)cfg2Bsr[i]) && (b2 == wantBsrAddr);
+            cfg2_ok &= ok;
+            cfg2_msg.append(String.format(" BSR%d=$%02X%s", i, cfg2Bsr[i], ok ? "" : "!"));
+        }
+        check(cfg2_ok, cfg2_msg.toString());
+
         // Runtime IRQ vectors live at the top of bank 3 (file 0x7FE0-0x7FFF),
         // visible at logical $7FE0-$7FFF in the boot-time view.
         int v_reset = (mem.getByte(ram.getAddress(0x7FFEL)) & 0xFF)

@@ -2,6 +2,9 @@
 reference/*.pdf
 binary/*.bin
 # binary/*.md is committed (analysis writeups), only the firmware blobs are excluded.
+# Raw screenshots / scratch uploads in reference/ are excluded; renamed and
+# committed copies live in binary/ where they are referenced from the analysis.
+reference/signal-*
 
 # Compiled SLEIGH output (regenerated from .slaspec).
 ghidra/**/*.sla

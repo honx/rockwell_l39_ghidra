@@ -856,6 +856,136 @@ silently.
 This is what "AI in the loop" should look like in practice. Not
 "AI replaces human review". "AI does work fast, human reviews,
 mistakes get pushed back, repo gets better."
+
+But — and this is the next slide — the same human came back two days
+later with a SECOND correction.
+}
+\end{frame}
+
+% ============================================================
+
+\begin{frame}{And then \dots\ a second email}
+Two days after the analysis was committed and corrected, a follow-up
+arrived with a screenshot. One table:\\[0.4em]
+
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Bank} & \textbf{Cfg1} & \textbf{Cfg2} & \textbf{Cfg3} & \textbf{Cfg4} \\
+\midrule
+B0 (\$0800)   & ROM0  & ROM8 & ROM10 & ROM18 \\
+B2 (\$2000)   & ROM2  & ROMA & ROM12 & ROM1A \\
+B4 (\$4000)   & ROM4  & ROMC & ROM14 & ROM1C \\
+B6 (\$6000)   & ROME  & INX  & ROM16 & ROM1E \\
+\midrule
+B8 (\$8000)   & RAM0  & RAM0  & RAM0  & RAM0 \\
+BA (\$A000)   & RAM1  & RAM1  & RAM1  & RAM1 \\
+BC (\$C000)   & RAM2  & RAM2  & RAM2  & RAM2 \\
+BE (\$E000)   & ROM6  & ROM6  & ROM6  & ROM6 \\
+\bottomrule
+\end{tabular}
+\\[0.6em]
+
+``\itshape Nach dem Reset wird die Konfiguration Cfg2 aktiviert.''
+\note{
+Read the table. Slow.
+
+This is the actual runtime banking model the firmware uses. Not "the
+firmware reprograms BSRs whenever it needs to" — the firmware switches
+between FOUR named, hand-tuned configurations. Three of the four BSR
+windows always hold RAM. One always holds the persistent code bank.
+The four lower windows swap between four named codings — Cfg1 through
+Cfg4.
+
+After reset, Cfg2 is active. That matches what the third boot stub
+writes — and once you read the table back against the disassembly,
+the eight STI writes in the third stub *exactly* establish Cfg2.
+
+I had described the third stub correctly at the byte level. I had
+called the resulting state "the runtime memory map". I had not
+recognised that the firmware authors had a four-state design with
+named transitions between them.
+}
+\end{frame}
+
+\begin{frame}{What the second correction added}
+\textbf{Before:} ``a single runtime memory map after init.''\\[0.3em]
+\textbf{After:} ``four named configurations the firmware switches between.''\\[0.6em]
+
+\begin{itemize}
+  \item There are four functions called \texttt{switch\_rom\_cfg1()}
+        through \texttt{switch\_rom\_cfg4()}. Each writes the eight BSR
+        values for one configuration.
+  \item Three of the BSR windows are \emph{always} the same: 24\,KiB
+        of external SRAM at \$8000-\$DFFF, plus a persistent code bank
+        ROM6 at \$E000-\$FFFF.
+  \item The lower four windows (\$0800-\$7FFF) swap between four ROM
+        groupings. The whole 128\,KiB EPROM gets used: 8\,KiB of code
+        always present, plus 32+24+24+32\,KiB swapped in by config.
+  \item Reset puts the chip in Cfg2.
+\end{itemize}
+
+\vspace{0.4em}
+\textbf{What this corrects:} my ``runtime memory map'' was the
+post-reset Cfg2 state. I'd missed that there are three other states
+the firmware also uses.
+\note{
+Architectural insight that the AI didn't get to on its own. The
+firmware authors had partitioned the address space into:
+- a fixed code+RAM region (always present, contains the dispatcher)
+- a dynamic ROM region that swaps between four named contents
+
+That's a clean engineering pattern, and it explains things I'd
+previously written off as "weird" — like why the AT result codes (in
+Cfg3) were in a different physical region than the fax responses (in
+Cfg4). The command parser switches configurations based on which
+subsystem the AT command targets.
+
+The bank-aware-analyser story I'd told earlier — "track every STI
+write to a BSR" — was also wrong-ish. The realistic shape of that
+analyser is: recognise calls to a small number of named
+configuration-switch functions, and follow the implied overlay change.
+Much more tractable than tracking arbitrary BSR writes, and it matches
+how real firmware is actually written.
+}
+\end{frame}
+
+\begin{frame}{Two corrections, one lesson}
+\begin{itemize}
+  \item \textbf{Round 1 (the BSR encoding):} I had ``two physical
+        chips''. He had ``read the bit pattern.''
+  \item \textbf{Round 2 (the four configurations):} I had ``one
+        runtime memory map''. He had ``four named configurations the
+        firmware actually uses.''
+\end{itemize}
+\vspace{0.6em}
+
+In both rounds, the corrective came from someone who had \emph{worked
+on this kind of firmware before}.\\[0.4em]
+
+The LLM had read a 119-page L39 manual and a 46-page R65C19 datasheet.\\
+What it didn't have was the embedded engineer's reflex of asking,
+``what does the firmware author's mental model look like?''
+\note{
+The deeper observation. The first correction was about an encoding
+detail. The second was about a programmer's *mental model* of their
+own system. The LLM doesn't have any priors about how embedded
+engineers structure firmware — it just has the bytes and the
+datasheet.
+
+For people in the audience who write firmware: this is the part of
+your job an LLM is not going to take. You build mental models of
+machines you understand from the inside. The LLM operates on bytes
+and documentation; it's good at that, but the synthesis you do — "in
+1997, an embedded engineer with 24 KiB of code budget per
+configuration would..." — is not coming from a model trained on
+GitHub.
+
+For people sceptical of AI in RE: this is the failure mode you should
+be sceptical of. Don't let the LLM produce a "complete picture" you
+haven't checked against the priors of someone who's done this work
+before.
 }
 \end{frame}
 
