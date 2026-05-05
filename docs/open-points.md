@@ -72,23 +72,31 @@ the four functions exactly, and renames them by recognising their
 BSR0 value (`$7C` → cfg1, `$70` → cfg2, `$74` → cfg3, `$78` → cfg4).
 Each function gets a header comment listing the BSR write sequence.
 
-**Phase 3: configuration propagation** — *not started.* The next step
-is a proper Ghidra `AbstractAnalyzer` subclass that:
-1. Initialises every code address as "config = unknown".
-2. For each call site to `switch_rom_cfgX`, marks the fall-through
+**Phase 3: ROM6 reference resolver** — *done.* The script
+`L3902ResolveRom6.java` does two things: creates a `rom6` overlay at
+`$E000-$FFFF` initialised from file `0x6000-0x7FFF` (so the runtime
+view is browsable in the listing), and walks every instruction in the
+default address space to add a redirect reference for any
+`$E000-$FFFF` target. On the reference firmware this rewrites 149
+references — every call into ROM6 (the dispatcher at `$E81B`, the IRQ
+handlers at `$E2E7-$E3C2`, the `switch_rom_cfgX` functions at
+`$E000-$E033`, the third-stage boot stub at `$E7B6`) now resolves to
+the right physical bytes at `default:$6xxx`.
+
+**Phase 4: configuration propagation + cfgN cross-reference rewriting**
+— *not started.* This is the hard part. A proper Ghidra
+`AbstractAnalyzer` subclass needs to:
+1. Initialise every code address as "config = unknown".
+2. For each call site to `switch_rom_cfgX`, mark the fall-through
    address as "config = X".
-3. Propagates that label through the function's CFG.
-4. Handles config-polymorphic code (the dispatcher at `$E81B`, the
+3. Propagate that label through the function's CFG.
+4. Handle config-polymorphic code (the dispatcher at `$E81B`, the
    IRQ handlers in ROM6) gracefully — probably by tagging it
    "polymorphic" rather than committing to a single configuration.
+5. For instructions in config-tagged code that target `$0200-$7FFF`,
+   add a redirect reference to the appropriate `cfgN` overlay block.
 
-**Phase 4: rewrite cross-references** — *not started.* For any
-instruction whose data operand is in `$0200-$7FFF` and whose code is
-config-tagged, replace the default xref with one pointing at the
-right overlay block. Then the listing's "References From" / "References
-To" panes resolve cross-bank reads correctly.
-
-Estimated remaining effort for Phases 3+4: 2-4 days of careful work,
+Estimated remaining effort for Phase 4: 2-4 days of careful work,
 mostly because of the polymorphic-call edge case.
 
 ### CRC peripheral is opaque

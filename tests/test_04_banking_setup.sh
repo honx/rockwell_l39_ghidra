@@ -36,8 +36,8 @@ set +e
     -processor "RockwellL39:LE:16:default" \
     -scriptPath "$REPO_ROOT/ghidra/RockwellL39/ghidra_scripts;$REPO_ROOT/tests/scripts" \
     -preScript L3902BankingSetup.java \
+    -postScript L3902ResolveRom6.java \
     -postScript AssertBankingSetup.java \
-    -noanalysis \
     >"$log" 2>&1
 status=$?
 set -e

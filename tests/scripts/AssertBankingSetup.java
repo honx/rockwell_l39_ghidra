@@ -8,9 +8,11 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
+import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.symbol.Reference;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -95,11 +97,62 @@ public class AssertBankingSetup extends GhidraScript {
                                     Long.toHexString(gotAddr.getOffset()).toUpperCase()));
         }
 
+        // 4. The rom6 overlay should exist (Phase 3) and have the expected size.
+        MemoryBlock rom6 = mem.getBlock("rom6");
+        check(rom6 != null, "overlay block 'rom6' exists (Phase 3)");
+        if (rom6 != null) {
+            check(rom6.isInitialized(), "rom6 is initialised");
+            check(rom6.getStart().getOffset() == 0xE000L,
+                    "rom6 starts at $E000 (got $" +
+                            Long.toHexString(rom6.getStart().getOffset()).toUpperCase() + ")");
+            check(rom6.getSize() == 0x2000L,
+                    "rom6 size is 0x2000 (got 0x" +
+                            Long.toHexString(rom6.getSize()).toUpperCase() + ")");
+            // Spot-check: rom6:$E7B6 should be the third-stage boot stub
+            // (file 0x67B6), starting with SEI ($78).
+            byte[] got = new byte[1];
+            mem.getBytes(rom6.getStart().getAddressSpace().getAddress(0xE7B6L), got);
+            check((got[0] & 0xFF) == 0x78,
+                    String.format("rom6:$E7B6 = SEI byte $78 (got $%02X)", got[0] & 0xFF));
+        }
+
+        // 5. The Phase-3 reference resolver should have added many
+        // ROM6 redirects. Count them: any reference whose target is in
+        // the boot-time-view ROM6 region $6000-$7FFF and whose source
+        // also has a sibling reference to the corresponding $E000-$FFFF
+        // address (i.e., the original encoded target) is one of our
+        // redirects. We accept anything >= 30 as evidence the resolver
+        // ran and found real call sites — the actual count on the
+        // reference firmware is around 149.
+        int rom6Redirects = countRom6Redirects();
+        check(rom6Redirects >= 30,
+                String.format("ROM6 redirects added (>=30): got %d", rom6Redirects));
+
         if (failures > 0) {
             printerr(String.format("AssertBankingSetup: %d assertion(s) failed", failures));
             System.exit(1);
         }
         println("AssertBankingSetup: all assertions passed");
+    }
+
+    private int countRom6Redirects() throws Exception {
+        AddressSpace ram = currentProgram.getAddressFactory().getDefaultAddressSpace();
+        int count = 0;
+        for (Instruction ins : currentProgram.getListing().getInstructions(true)) {
+            if (!ins.getAddress().getAddressSpace().equals(ram)) continue;
+            // For each instruction, look for the (original $Exxx ref,
+            // redirected $6xxx ref) pair — both pointing into default RAM.
+            boolean hasOriginal = false;
+            boolean hasRedirect = false;
+            for (Reference r : ins.getReferencesFrom()) {
+                if (!r.getToAddress().getAddressSpace().equals(ram)) continue;
+                long off = r.getToAddress().getOffset();
+                if (off >= 0xE000L && off <= 0xFFFFL) hasOriginal = true;
+                if (off >= 0x6000L && off <= 0x7FFFL) hasRedirect = true;
+            }
+            if (hasOriginal && hasRedirect) count++;
+        }
+        return count;
     }
 
     private void spotCheck(Memory mem, String overlayName, long offset,
