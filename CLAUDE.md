@@ -98,7 +98,7 @@ The runtime memory map is **four named banking configurations**
 `switch_rom_cfgX()` functions. After reset, Cfg2 is active. Three
 windows are always RAM (`$8000-$DFFF` = RAM0/1/2 = 24 KiB external
 SRAM); `$E000-$FFFF` is always ROM6 (the persistent dispatcher bank).
-The four lower windows (`$0800-$7FFF`) swap between sets of physical
+The four lower windows (`$0200-$7FFF`) swap between sets of physical
 ROM banks per configuration. Full table in
 `binary/elsa_microlink_336tqv.md`.
 

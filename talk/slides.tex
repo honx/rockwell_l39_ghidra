@@ -874,7 +874,7 @@ arrived with a screenshot. One table:\\[0.4em]
 \toprule
 \textbf{Bank} & \textbf{Cfg1} & \textbf{Cfg2} & \textbf{Cfg3} & \textbf{Cfg4} \\
 \midrule
-B0 (\$0800)   & ROM0  & ROM8 & ROM10 & ROM18 \\
+B0 (\$0200)   & ROM0  & ROM8 & ROM10 & ROM18 \\
 B2 (\$2000)   & ROM2  & ROMA & ROM12 & ROM1A \\
 B4 (\$4000)   & ROM4  & ROMC & ROM14 & ROM1C \\
 B6 (\$6000)   & ROME  & INX  & ROM16 & ROM1E \\
@@ -920,7 +920,7 @@ named transitions between them.
   \item Three of the BSR windows are \emph{always} the same: 24\,KiB
         of external SRAM at \$8000-\$DFFF, plus a persistent code bank
         ROM6 at \$E000-\$FFFF.
-  \item The lower four windows (\$0800-\$7FFF) swap between four ROM
+  \item The lower four windows (\$0200-\$7FFF) swap between four ROM
         groupings. The whole 128\,KiB EPROM gets used: 8\,KiB of code
         always present, plus 32+24+24+32\,KiB swapped in by config.
   \item Reset puts the chip in Cfg2.

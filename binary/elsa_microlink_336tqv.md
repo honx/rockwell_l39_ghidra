@@ -173,7 +173,7 @@ file 0x67B6:
   B2 0C 33         STI #$0C, $33   ; ESS    := $0C   ES1+ES2 fast cycles
 
   ;-- final BSR layout for the running firmware --
-  B2 70 18         STI #$70, $18   ; BSR0 := $70   $0800-$1FFF → file 0x00000-0x01FFF (bank 0)
+  B2 70 18         STI #$70, $18   ; BSR0 := $70   $0200-$1FFF → file 0x00000-0x01FFF (bank 0)
   B2 71 19         STI #$71, $19   ; BSR1 := $71   $2000-$3FFF → file 0x02000-0x03FFF (bank 1)
   B2 72 1A         STI #$72, $1A   ; BSR2 := $72   $4000-$5FFF → file 0x04000-0x05FFF (bank 2)
   B2 77 1B         STI #$77, $1B   ; BSR3 := $77   $6000-$7FFF → file 0x0E000-0x0FFFF (bank 7)
@@ -193,12 +193,12 @@ the 128 KiB of EPROM through a 64 KiB CPU view (see next section).
 The firmware doesn't use the BSRs as a free-form bank-mapping primitive
 — it uses them to switch between four **named, hand-tuned configurations**
 called Cfg1, Cfg2, Cfg3 and Cfg4. Each configuration determines what is
-visible in the four lower ROM windows (`$0800-$7FFF`); the four upper
+visible in the four lower ROM windows (`$0200-$7FFF`); the four upper
 windows (`$8000-$FFFF`) hold RAM and persistent ROM and never change.
 
 | CPU window | Cfg1 | **Cfg2** | Cfg3 | Cfg4 | Always (B8-BE) |
 |---|---|---|---|---|---|
-| `$0800-$1FFF` (B0) | ROM0  | **ROM8** | ROM10 | ROM18 | — |
+| `$0200-$1FFF` (B0) | ROM0  | **ROM8** | ROM10 | ROM18 | — |
 | `$2000-$3FFF` (B2) | ROM2  | **ROMA** | ROM12 | ROM1A | — |
 | `$4000-$5FFF` (B4) | ROM4  | **ROMC** | ROM14 | ROM1C | — |
 | `$6000-$7FFF` (B6) | ROME  | **INX**  | ROM16 | ROM1E | — |
@@ -206,6 +206,12 @@ windows (`$8000-$FFFF`) hold RAM and persistent ROM and never change.
 | `$A000-$BFFF` (BA) | — | — | — | — | **RAM1** (external SRAM) |
 | `$C000-$DFFF` (BC) | — | — | — | — | **RAM2** (external SRAM, special role) |
 | `$E000-$FFFF` (BE) | — | — | — | — | **ROM6** (file `0x06000-0x07FFF`) |
+
+The B0 row covers `$0200-$1FFF` (not `$0800-$1FFF` as the generic L39
+TRM memory map would suggest) — on this board the L3902 exposes the
+banked window starting just above pages 0+1 RAM at `$01FF`, not at the
+default `$0800` boundary. The other windows are the standard 8 KiB
+ranges.
 
 `ROMn` here means "physical EPROM bank starting at file offset `0xn000`":
 ROM0 = file `0x00000-0x01FFF`, ROM8 = file `0x08000-0x09FFF`, ROM18 =
@@ -325,8 +331,8 @@ offsets**; convert to runtime logical addresses by:
 
 | File offset | Runtime logical |
 |---|---|
-| `0x0000-0x07FF` | `$0800-$0FFF` (BSR0) — actually the lower half of bank 0 |
-| `0x0800-0x1FFF` | `$0800+0x800-$1FFF` (still BSR0) |
+| `0x0000-0x01FF` | not visible at runtime (covered by on-chip pages 0+1 RAM) |
+| `0x0200-0x1FFF` | `$0200-$1FFF` (BSR0, the B0 window) |
 | `0x2000-0x3FFF` | `$2000-$3FFF` (BSR1) |
 | `0x4000-0x5FFF` | `$4000-$5FFF` (BSR2) |
 | `0x6000-0x7FFF` | `$E000-$FFFF` (BSR7) |
