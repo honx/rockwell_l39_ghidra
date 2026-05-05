@@ -1,6 +1,7 @@
 # Reference material — do not redistribute Rockwell datasheets or vendor firmware images.
 reference/*.pdf
 binary/*.bin
+# binary/*.md is committed (analysis writeups), only the firmware blobs are excluded.
 
 # Compiled SLEIGH output (regenerated from .slaspec).
 ghidra/**/*.sla

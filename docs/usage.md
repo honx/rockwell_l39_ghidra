@@ -36,10 +36,9 @@ cp ghidra/RockwellL39/data/languages/RockwellL39.sla "$GHIDRA/Ghidra/Processors/
 
 The reset vector at `$FFFE/F` is automatically marked as an entry point by the pspec, so analysis starts from there.
 
-For images **larger than 64 KiB** (typical: 128 KiB), only the first 64 KiB lands in the address space. To inspect higher physical banks, either:
+For images **larger than 64 KiB** (typical: 128 KiB), the L3902 sees only 64 KiB of its 128 KiB EPROM at any given time, through its eight 8 KiB bank-select windows. By default Ghidra loads the first 64 KiB and you'll see the *boot-time* memory map. To inspect the runtime memory map (after the firmware has reprogrammed its `BSR` registers) you have to re-import the image with a different `File Offset`, or use the L39 loader's `BANK_HIGH_n` overlays.
 
-- Re-import the same file with a different *File Offset* (e.g. `0x10000` for the second 64 KiB), saving as a separate program, or
-- Wait for the L39-specific loader to be packaged (see [`open-points.md`](open-points.md) — until then the manual reimport is the workaround).
+A worked example of how the boot trampoline shifts the visible memory map across three stages is in [`../binary/elsa_microlink_336tqv.md`](../binary/elsa_microlink_336tqv.md). The short version: the first instruction the CPU executes is at logical `$FFC0`, but within three jumps the firmware has reprogrammed all eight `BSR` registers and is running at `$E7B6` mapped from a completely different file offset. Tracing that by hand requires knowing what each `STI #imm,$001x` does; an automated bank-aware analyser is on the roadmap (see `open-points.md`).
 
 ## Loading a firmware image (headless)
 

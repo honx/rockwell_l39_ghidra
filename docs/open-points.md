@@ -10,13 +10,19 @@ R65C19 datasheet Appendix A lists `JPI` as a 3-byte threaded-code instruction (t
 
 If a future analyst encounters an unknown 3-byte opcode that disassembles oddly and immediately precedes a 16-bit value pointing into a jump table, that's likely `JPI`. Add it to the slaspec then.
 
+**Status against the reference firmware:** a sweep across the disassembled ELSA image found zero unknown / invalid mnemonics, so the reference firmware does not appear to use `JPI`. This is consistent with `JPI` being intended for compiled-language run-times (Forth-style threaded interpreters), not for hand-written modem firmware.
+
 ### `ADD zp` and `ADD zp,X` — opcodes unknown
 
 Datasheet Table A-3 lists `ADD` with three addressing modes: `IMM` (2 bytes, 2 cycles), `ZP` (2 bytes, 3 cycles), `ZP,X` (2 bytes, 4 cycles). The IMM form is at `$89` (the slaspec encodes it). The ZP and ZP,X forms are not at `$65` / `$75` (those are still standard `ADC`); their actual opcodes are not visible in the matrix as transcribed. Same situation as `JPI` — wait until they show up in real code, then map them.
 
+**Status against the reference firmware:** also not encountered. The image uses 12 `ADC` instructions (carry-propagating add, standard 6502) and the spec's `ADD #imm` once or twice; no plain ZP-mode add-without-carry.
+
 ### BCD math is binary-only
 
 Stock 6502 `ADC` and `SBC` honour the `D` flag and do decimal-correction at the end of the operation. The slaspec sets and reads `D` but does not perform the correction. For pure analysis this is fine; it would matter only if someone tried to use the spec to drive an emulator.
+
+**Status against the reference firmware:** `SED` appears 6 times in the disassembly, so the firmware does briefly enter BCD mode (probably for AT-command result-code formatting or LCD-style number printing). Disassembly of those windows is correct but the decompiler will model the bracketed `ADC`/`SBC` as binary arithmetic, which is wrong for those handful of instructions. Adding a real BCD p-code expansion would close this.
 
 ### No cycle counts
 
@@ -40,6 +46,8 @@ Neither is implemented.
 ### No BSR-aware cross-referencing
 
 Following from the above: when the firmware does `STI #$70,$1B` followed by `JMP $6200`, Ghidra correctly disassembles both instructions but does not understand that `$6200` after that bank switch is in a different physical bank than `$6200` before it. A user-driven workaround is to re-import the firmware with a non-zero `File Offset` to inspect the post-switch view; an automated workaround is the analyser sketched above.
+
+The reference ELSA image is a particularly clear example of why this matters: its boot is a **three-stage trampoline**, and each stage's `JMP` target reads from a *different* physical bank than the bank you'd see by linearly disassembling the file. The first stage at `$FFC0` jumps to `$6200`, but `$6200` after the BSR write reads from file offset `0x0200`, not `0x6200`. Without bank-aware xrefs, a Ghidra user has to follow that chain manually with the binary loader's "File Offset" knob — which we walk through end-to-end in `binary/elsa_microlink_336tqv.md`. An automatic analyser that recognised the `STI #imm,$001x; JMP $abs` pattern and computed the post-switch target would turn that manual walk into a one-click follow-jump.
 
 ### CRC peripheral is opaque
 

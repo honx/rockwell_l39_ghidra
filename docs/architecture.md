@@ -61,6 +61,16 @@ The loader extends `AbstractProgramWrapperLoader` and:
 
 The loader source compiles cleanly against the Ghidra 12.0.4 API but isn't yet built into a `.jar` — it ships as source only. Until that's done, `BinaryLoader` + `-processor RockwellL39:LE:16:default` is the standard route.
 
+## Banking is not in the SLEIGH spec
+
+A common question: does this module model the L3902's eight bank-select registers (`BSR0`-`BSR7`)? **No, and it shouldn't.** SLEIGH describes a fixed instruction-set architecture, not a system; bank-switching is a system-level concern that belongs in three different places, none of them the slaspec:
+
+1. **Loader** — creates the memory blocks for every physical bank. `RockwellL39Loader.java` does this for >64 KiB images via `BANK_HIGH_n` overlays.
+2. **Analyser** — tracks `STI #imm,$0018-$001F` writes and recognises which physical bank the firmware just switched into which logical window. **Not implemented**, see `open-points.md`.
+3. **Manual** — the user picks the right overlay block in the listing.
+
+Each `BSRn` is one byte: `[ES3 ES2 ES1 ES0 A16 A15 A14 A13]`. The four address bits cover sixteen 8 KiB physical banks (= 128 KiB), and the four chip-select bits drive the L3902's external `ES0`-`ES3` pins. For most realistic boards those `ES` pins do nothing more than tell the EPROM whether this is a normal- or extended-cycle access; the address bits do all of the actual bank selection. The `binary/elsa_microlink_336tqv.md` analysis walks through one such firmware in detail and shows how its three-stage boot trampoline is built from sequential `STI` writes to `BSR3` and `BSR7`.
+
 ## pspec / cspec
 
 `RockwellL39.pspec` declares the full vector table at `$FFE0-$FFFF`, all eight `JSB#` indirect-call targets, and ~50 peripheral register names at `$0000-$003F`, `$05FE-$05FF`. The vector at `$FFFE` is marked `entry="true"` so analysis kicks in there.

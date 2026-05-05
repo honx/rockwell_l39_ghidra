@@ -1,15 +1,26 @@
 // Headless assertion script for test_03_e2e_firmware.sh.
 //
 // Imports the ELSA reference firmware, runs auto-analysis, and asserts on
-// invariants we know from manual inspection of the image:
+// invariants we know from manual inspection of the image (see the writeup
+// at binary/elsa_microlink_336tqv.md):
 //
 //   * Reset vector at $FFFE reads $FFC0.
-//   * Disassembly at $FFC0 starts with SEI.
-//   * Disassembly at $FFC1 is "STI #$70,$1B" (the BSR3 setup).
-//   * Disassembly at $FFC4 is "JMP $6200".
+//   * Stage-1 boot stub at $FFC0: SEI / STI #$70,$1B / JMP $6200.
+//     ($1B is BSR3 — programs it to expose physical bank 0 at $6000-$7FFF.)
+//   * Stage-2 boot stub at $0200: STI #$73,$1F / JMP $E7B6.
+//     ($1F is BSR7 — programs it to expose physical bank 3 at $E000-$FFFF.
+//     We can read $0200 directly because BinaryLoader maps the first 64 KiB
+//     of the file at $0000-$FFFF 1:1; bank 0 *is* file 0x0000-0x1FFF.)
+//   * Stage-3 hardware initialiser at file offset 0x67B6 begins SEI / STI
+//     #$00,$32 / CLD. (Reachable as $67B6 in the boot-time view because
+//     bank 3 = file 0x6000-0x7FFF, which is also where $E000-$FFFF reads
+//     after stage 2 swaps BSR7.)
+//   * Runtime IRQ vectors at file 0x7FE0-0x7FFF (visible at logical
+//     $7FE0-$7FFF in the boot-time view) point to the runtime IRQ
+//     dispatcher block: NMI -> $E2E7, RESET -> $E7B6.
 //   * The mnemonic distribution shows R65C19-specific opcodes — the binary
 //     should contain at least 100 of STI, 50 of BAR+BAS combined, and 50 of
-//     SBA+RBA combined. Exact counts may shift with analyzer changes; we
+//     SBA+RBA combined. Exact counts may shift with analyser changes; we
 //     check lower bounds only.
 //   * Auto-analysis discovered at least 100 functions.
 
@@ -67,6 +78,31 @@ public class AssertFirmware extends GhidraScript {
         check(s_ffc0.startsWith("sei"),                "$FFC0 = SEI (got: " + s_ffc0 + ")");
         check(s_ffc1.startsWith("sti #0x70,0x1b"),     "$FFC1 = STI #$70,$1B (got: " + s_ffc1 + ")");
         check(s_ffc4.startsWith("jmp 0x6200"),         "$FFC4 = JMP $6200 (got: " + s_ffc4 + ")");
+
+        // Stage-2 boot stub at file 0x0200 (= logical $0200 with 1:1 load).
+        disassemble(ram.getAddress(0x0200L));
+        String s_0200 = insnAt(0x0200).toLowerCase();
+        String s_0203 = insnAt(0x0203).toLowerCase();
+        check(s_0200.startsWith("sti #0x73,0x1f"),     "$0200 = STI #$73,$1F (got: " + s_0200 + ")");
+        check(s_0203.startsWith("jmp 0xe7b6"),         "$0203 = JMP $E7B6 (got: " + s_0203 + ")");
+
+        // Stage-3 hardware initialiser at file 0x67B6.
+        disassemble(ram.getAddress(0x67B6L));
+        String s_67b6 = insnAt(0x67B6).toLowerCase();
+        String s_67b7 = insnAt(0x67B7).toLowerCase();
+        String s_67ba = insnAt(0x67BAL).toLowerCase();
+        check(s_67b6.startsWith("sei"),                "$67B6 = SEI (got: " + s_67b6 + ")");
+        check(s_67b7.startsWith("sti #0x0,0x32"),      "$67B7 = STI #$00,$32 (got: " + s_67b7 + ")");
+        check(s_67ba.startsWith("cld"),                "$67BA = CLD (got: " + s_67ba + ")");
+
+        // Runtime IRQ vectors live at the top of bank 3 (file 0x7FE0-0x7FFF),
+        // visible at logical $7FE0-$7FFF in the boot-time view.
+        int v_reset = (mem.getByte(ram.getAddress(0x7FFEL)) & 0xFF)
+                | ((mem.getByte(ram.getAddress(0x7FFFL)) & 0xFF) << 8);
+        int v_nmi   = (mem.getByte(ram.getAddress(0x7FFCL)) & 0xFF)
+                | ((mem.getByte(ram.getAddress(0x7FFDL)) & 0xFF) << 8);
+        check(v_reset == 0xE7B6, String.format("runtime RESET vector (file 0x7FFE) = $E7B6 (got $%04X)", v_reset));
+        check(v_nmi   == 0xE2E7, String.format("runtime NMI vector (file 0x7FFC) = $E2E7 (got $%04X)", v_nmi));
 
         // 5. Mnemonic histogram.
         Map<String, Integer> freq = new HashMap<>();
