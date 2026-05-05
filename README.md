@@ -21,6 +21,10 @@ for it; this module fills that gap.
 │   │   ├── RockwellL39.ldefs      language registration
 │   │   ├── RockwellL39.pspec      vector table + I/O register symbols
 │   │   └── RockwellL39.cspec      default calling convention
+│   ├── ghidra_scripts/        Bundled scripts.
+│   │   └── L3902BankingSetup.java  Creates per-configuration overlays
+│   │                               and identifies switch_rom_cfgX()
+│   │                               functions for the L3902 banking model.
 │   ├── src/main/java/         Java loader for banked images.
 │   ├── Module.manifest        Ghidra extension metadata.
 │   ├── extension.properties
@@ -123,7 +127,7 @@ $GHIDRA_INSTALL_DIR/support/analyzeHeadless /tmp/proj L39 \
   all 256 opcode slots used by the reference image; auto-analysis finds
   204 functions / 2222 instructions in ~4 s. SLEIGH spec is 600 lines,
   loader is 150 lines of Java.
-- **Tests**: 60 assertions across 3 test scripts, all green against
+- **Tests**: 83 assertions across 4 test scripts, all green against
   Ghidra 12.0.4. Two earlier RE bugs are now regression-tested.
 - **Analysis**: ~500 lines of writeup covering the boot trampoline,
   the four-configuration runtime banking model, the dispatcher pattern
@@ -143,9 +147,11 @@ Documented in detail in `docs/open-points.md`. Highlights:
 - BCD math is modeled as binary in the SLEIGH p-code (the `D` flag
   is set/cleared but no decimal correction is emitted). Affects
   decompilation of the few `SED`-bracketed regions, not disassembly.
-- No bank-aware cross-reference analyser. The reference firmware uses
-  a four-configuration banking scheme; following calls across
-  configurations is currently a manual exercise.
+- Bank-aware cross-references: Phases 1+2 done (per-configuration
+  overlays + `switch_rom_cfgX()` detection via the
+  `L3902BankingSetup.java` script), Phases 3+4 (config propagation
+  through the CFG and cross-reference rewriting) outstanding. See
+  `docs/open-points.md`.
 - The Java loader works but isn't packaged as a `.jar` extension yet —
   use `BinaryLoader` + `-processor RockwellL39:LE:16:default` until
   it is.

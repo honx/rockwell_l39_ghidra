@@ -43,19 +43,53 @@ For images >64 KiB, the loader currently creates `BANK_HIGH_n` overlay blocks at
 
 Neither is implemented.
 
-### No BSR-aware cross-referencing
+### Bank-aware cross-referencing — Phases 1+2 done, 3+ outstanding
 
-Following from the above: when the firmware does `STI #$70,$1B` followed by `JMP $6200`, Ghidra correctly disassembles both instructions but does not understand that `$6200` after that bank switch is in a different physical bank than `$6200` before it. A user-driven workaround is to re-import the firmware with a non-zero `File Offset` to inspect the post-switch view; an automated workaround is the analyser sketched above.
+Without bank-aware cross-references, when the firmware does
+`STI #$70,$1B` followed by `JMP $6200`, Ghidra correctly disassembles
+both instructions but does not understand that `$6200` after that bank
+switch is in a different physical bank than `$6200` before it. The
+reference ELSA image is a particularly clear example: its boot is a
+**three-stage trampoline** where each stage's `JMP` target reads from
+a *different* physical bank than the bank you'd see by linearly
+disassembling the file. The first stage at `$FFC0` jumps to `$6200`,
+but `$6200` after the BSR write reads from file offset `0x0200`, not
+`0x6200`.
 
-The reference ELSA image is a particularly clear example of why this matters: its boot is a **three-stage trampoline**, and each stage's `JMP` target reads from a *different* physical bank than the bank you'd see by linearly disassembling the file. The first stage at `$FFC0` jumps to `$6200`, but `$6200` after the BSR write reads from file offset `0x0200`, not `0x6200`. Without bank-aware xrefs, a Ghidra user has to follow that chain manually with the binary loader's "File Offset" knob — which we walk through end-to-end in `binary/elsa_microlink_336tqv.md`. An automatic analyser that recognised the `STI #imm,$001x; JMP $abs` pattern and computed the post-switch target would turn that manual walk into a one-click follow-jump.
+The work to fix this is broken into four phases:
 
-A second observation from the same firmware sharpens what the analyser should look like. The ELSA modem doesn't reprogram BSRs in arbitrary ways at runtime — it switches between **four named, hand-tuned configurations** (Cfg1-Cfg4 in the firmware author's terminology) using four small dispatcher functions named `switch_rom_cfgX()`. Each configuration is a fixed 8-byte BSR-value vector. So the realistic shape of the analyser is:
+**Phase 1: per-configuration overlays** — *done.* The script
+`ghidra/RockwellL39/ghidra_scripts/L3902BankingSetup.java` reads the
+firmware from disk, identifies the four 8 KiB physical banks each
+configuration maps in (per `binary/banking-configurations.png`), and
+creates four Ghidra overlay blocks named `cfg1`, `cfg2`, `cfg3`,
+`cfg4` at `$0200-$7FFF`. Each overlay's bytes come from the right
+physical banks; the cfg2/B6 "INX" hole is filled with `$FF`.
 
-1. Recognise calls to one of (a small number of) configuration-switch functions.
-2. For each call site, annotate the configuration that is active *after* the call.
-3. Resolve cross-bank references in subsequent code against the active configuration's overlay.
+**Phase 2: switch_rom_cfgX detection** — *done.* The same script
+pattern-matches the canonical four-STI-plus-RTS body in ROM6, finds
+the four functions exactly, and renames them by recognising their
+BSR0 value (`$7C` → cfg1, `$70` → cfg2, `$74` → cfg3, `$78` → cfg4).
+Each function gets a header comment listing the BSR write sequence.
 
-That is much more tractable than tracking arbitrary BSR writes. It also matches how real banked-ROM firmwares are written in practice: programmers don't enjoy deriving BSR values by hand; they use named macros / functions for the configurations they actually need.
+**Phase 3: configuration propagation** — *not started.* The next step
+is a proper Ghidra `AbstractAnalyzer` subclass that:
+1. Initialises every code address as "config = unknown".
+2. For each call site to `switch_rom_cfgX`, marks the fall-through
+   address as "config = X".
+3. Propagates that label through the function's CFG.
+4. Handles config-polymorphic code (the dispatcher at `$E81B`, the
+   IRQ handlers in ROM6) gracefully — probably by tagging it
+   "polymorphic" rather than committing to a single configuration.
+
+**Phase 4: rewrite cross-references** — *not started.* For any
+instruction whose data operand is in `$0200-$7FFF` and whose code is
+config-tagged, replace the default xref with one pointing at the
+right overlay block. Then the listing's "References From" / "References
+To" panes resolve cross-bank reads correctly.
+
+Estimated remaining effort for Phases 3+4: 2-4 days of careful work,
+mostly because of the polymorphic-call edge case.
 
 ### CRC peripheral is opaque
 
