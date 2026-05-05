@@ -1,0 +1,16 @@
+# Reference material — do not redistribute Rockwell datasheets or vendor firmware images.
+reference/*.pdf
+binary/*.bin
+
+# Compiled SLEIGH output (regenerated from .slaspec).
+ghidra/**/*.sla
+
+# Editor / OS noise.
+.DS_Store
+*.swp
+*~
+
+# Ghidra build artifacts.
+build/
+dist/
+*.class

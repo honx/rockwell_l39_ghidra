@@ -1,0 +1,11 @@
+// Build script for the RockwellL39 Ghidra extension.
+//
+// Usage:
+//   GHIDRA_INSTALL_DIR=/opt/ghidra gradle
+// or set GHIDRA_INSTALL_DIR in gradle.properties / environment.
+
+apply from: (findProject(':SoftwareModeling') != null)
+        ? project(':SoftwareModeling').projectDir.toString() + '/buildExtension.gradle'
+        : (System.getenv('GHIDRA_INSTALL_DIR')
+                ? System.getenv('GHIDRA_INSTALL_DIR') + '/support/buildExtension.gradle'
+                : new File(rootProject.projectDir, 'support/buildExtension.gradle').toString())
