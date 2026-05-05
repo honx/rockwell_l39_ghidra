@@ -37,6 +37,7 @@ set +e
     -scriptPath "$REPO_ROOT/ghidra/RockwellL39/ghidra_scripts;$REPO_ROOT/tests/scripts" \
     -preScript L3902BankingSetup.java \
     -postScript L3902ResolveRom6.java \
+    -postScript L3902PropagateConfigs.java \
     -postScript AssertBankingSetup.java \
     >"$log" 2>&1
 status=$?

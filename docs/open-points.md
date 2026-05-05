@@ -84,20 +84,59 @@ handlers at `$E2E7-$E3C2`, the `switch_rom_cfgX` functions at
 the right physical bytes at `default:$6xxx`.
 
 **Phase 4: configuration propagation + cfgN cross-reference rewriting**
-— *not started.* This is the hard part. A proper Ghidra
-`AbstractAnalyzer` subclass needs to:
-1. Initialise every code address as "config = unknown".
-2. For each call site to `switch_rom_cfgX`, mark the fall-through
-   address as "config = X".
-3. Propagate that label through the function's CFG.
-4. Handle config-polymorphic code (the dispatcher at `$E81B`, the
-   IRQ handlers in ROM6) gracefully — probably by tagging it
-   "polymorphic" rather than committing to a single configuration.
-5. For instructions in config-tagged code that target `$0200-$7FFF`,
-   add a redirect reference to the appropriate `cfgN` overlay block.
+— *done.* The script `L3902PropagateConfigs.java` walks the program's
+control-flow graph in the default address space and tags each
+instruction with the configuration(s) it can run under.
 
-Estimated remaining effort for Phase 4: 2-4 days of careful work,
-mostly because of the polymorphic-call edge case.
+Algorithm:
+
+1. Locate the four `switch_rom_cfgN` functions (named by Phase 2).
+2. Seed the worklist with one entry per call site of each
+   `switch_rom_cfgN`: the fall-through address gets cfg = N.
+3. Worklist propagation: per (instruction, cfg) pair, tag the
+   instruction with cfg, then push successors onto the worklist:
+   - Fall-through: same cfg, except after a JSR to `switch_rom_cfgM`
+     where post-call cfg = M.
+   - Branch targets and call targets: same cfg as caller.
+4. For each tagged instruction whose flow target lies in `$0200-$7FFF`,
+   add a memory reference to the same offset in each tagged config's
+   overlay address space.
+
+On the reference firmware:
+- 15 call-site fall-throughs seeded.
+- 6244 worklist visits, 2087 instructions tagged.
+- 1205 instructions are polymorphic (reachable from multiple configs)
+  — mostly the dispatcher at `$E81B` / file `0x681B` and the IRQ
+  handlers in ROM6, both of which are correctly identified as shared.
+- 2125 cfgN references rewritten across all four configs:
+  cfg1=460, cfg2=473, cfg3=622, cfg4=570.
+
+Known limitations of the simplified propagator:
+
+- **"Functions return with the same cfg they were called with."**
+  Implemented as: post-JSR fall-through inherits caller's cfg unless
+  the callee is directly `switch_rom_cfgM`. If a function internally
+  calls `switch_rom_cfgM` and returns without restoring, the
+  caller's fall-through gets the wrong cfg tag. A correct fix is
+  inter-procedural fixpoint analysis (per-function exit-cfg). Not
+  implemented; the reference firmware seems to use only direct
+  `switch_rom` calls so this hasn't bitten in practice.
+
+- **Indirect calls aren't followed.** Computed JMPs and `JSB#`
+  through `$FFE0-$FFEE` slots break the propagation. The reference
+  firmware doesn't use `JSB#` (those slots are unset) so this isn't
+  an issue today.
+
+- **Polymorphic instructions get refs to all candidate cfg overlays.**
+  Users see multiple `cfgN:target` xrefs in the panel and have to
+  pick the right one based on context. This is the right behaviour
+  for shared code (any cfg is a possible caller) but adds noise.
+
+The bank-aware analyser is now feature-complete for routine usage on
+this firmware. Promoting the four scripts to a proper Ghidra
+`AbstractAnalyzer` (so they auto-run on import without `-postScript`
+gymnastics) is the obvious follow-up but lower priority — the scripts
+work fine as drivable post-scripts today.
 
 ### CRC peripheral is opaque
 

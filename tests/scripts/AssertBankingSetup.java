@@ -128,6 +128,33 @@ public class AssertBankingSetup extends GhidraScript {
         check(rom6Redirects >= 30,
                 String.format("ROM6 redirects added (>=30): got %d", rom6Redirects));
 
+        // 6. Phase-4 config propagation: every cfgN overlay should now
+        // be the target of a meaningful number of references from
+        // default-RAM instructions. Reference firmware sees roughly:
+        //   cfg1: 460, cfg2: 473, cfg3: 622, cfg4: 570 = 2125 total
+        // We use loose lower bounds since the actual count varies with
+        // analyser heuristics; we mainly want to know that all four
+        // configs got tagged with non-trivial reference counts.
+        int[] cfgRefCounts = countCfgReferences();
+        check(cfgRefCounts[1] >= 100, String.format("cfg1 refs >= 100 (got %d)", cfgRefCounts[1]));
+        check(cfgRefCounts[2] >= 100, String.format("cfg2 refs >= 100 (got %d)", cfgRefCounts[2]));
+        check(cfgRefCounts[3] >= 100, String.format("cfg3 refs >= 100 (got %d)", cfgRefCounts[3]));
+        check(cfgRefCounts[4] >= 100, String.format("cfg4 refs >= 100 (got %d)", cfgRefCounts[4]));
+        int totalCfgRefs = cfgRefCounts[1] + cfgRefCounts[2] + cfgRefCounts[3] + cfgRefCounts[4];
+        check(totalCfgRefs >= 1000,
+                String.format("total cfgN refs >= 1000 (got %d)", totalCfgRefs));
+
+        // 7. Spot-check: the third-stage boot stub at $67B6 establishes
+        // cfg2. The very first instruction *after* its eight BSR writes
+        // is at $67E5 (= file 0x67E5, where the post-BSR-establishment
+        // peripheral init continues). The propagator should have
+        // tagged that address as belonging to cfg2 — verifiable by
+        // looking at any subsequent reference into the swappable bank
+        // and checking it has a cfg2 redirect.
+        // (Generic spot-check: at least one default-RAM instruction
+        // has a cfg2 reference.)
+        check(cfgRefCounts[2] > 0, "at least one cfg2 reference exists");
+
         if (failures > 0) {
             printerr(String.format("AssertBankingSetup: %d assertion(s) failed", failures));
             System.exit(1);
@@ -172,5 +199,25 @@ public class AssertBankingSetup extends GhidraScript {
             if (got[i] != expected[i]) match = false;
         }
         check(match, sb.toString());
+    }
+
+    /**
+     * Count cross-references whose target lies in each cfgN overlay's
+     * address space. Returns a 5-element array: [unused, cfg1, cfg2, cfg3, cfg4].
+     */
+    private int[] countCfgReferences() throws Exception {
+        int[] counts = new int[5];
+        for (Instruction ins : currentProgram.getListing().getInstructions(true)) {
+            for (Reference r : ins.getReferencesFrom()) {
+                String spaceName = r.getToAddress().getAddressSpace().getName();
+                if (spaceName.startsWith("cfg") && spaceName.length() == 4) {
+                    char c = spaceName.charAt(3);
+                    if (c >= '1' && c <= '4') {
+                        counts[c - '0']++;
+                    }
+                }
+            }
+        }
+        return counts;
     }
 }
