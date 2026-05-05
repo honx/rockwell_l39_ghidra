@@ -1,0 +1,17 @@
+build/
+*.aux
+*.log
+*.nav
+*.out
+*.snm
+*.toc
+*.vrb
+*.synctex.gz
+
+# Generated PDFs are committed alongside the sources so reviewers can
+# read the talk without setting up a TeX install. Comment these out if
+# you'd rather build-on-demand.
+# slides.pdf
+# slides-notes.pdf
+# slides-handout.pdf
+# title-graphic.pdf
